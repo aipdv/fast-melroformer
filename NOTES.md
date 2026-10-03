@@ -43,3 +43,14 @@ Op level inside one attention block (`bench/profile_attn.py`):
 RoPE is applied in fp32 with angles rebuilt per call (rotary_embedding_torch + audio-separator's fp32 guard).
 RMSNorm upcasts to fp32 too. These are memory-bound elementwise passes over 66k x 512 tensors.
 Hypothesis H1: precomputed fp16 cos/sin + fused kernels cut attention time ~45% => ~1.6x end to end.
+
+## H1 result: fastmbr/patch.py (fp16 RoPE tables, fused gates into qkv GEMM, F.rms_norm)
+
+`bench/bench_chunk.py ref16 fast16`, 3 interleaved reps, one 11 s chunk:
+
+| variant | s/chunk | x real time | fidelity vs fp32 |
+|---|---|---|---|
+| ref16 | 8.24 | 1.34x | 55.6 dB |
+| fast16 | 5.14 | 2.14x | 56.3 dB |
+
+1.6x from glue removal alone. Output identical to the ear (both > 55 dB).
