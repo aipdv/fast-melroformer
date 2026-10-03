@@ -1,0 +1,10 @@
+*.wav
+*.flac
+*.mp4
+*.ckpt
+*.safetensors
+*.mlpackage/
+*.mlmodelc/
+.venv/
+__pycache__/
+out/

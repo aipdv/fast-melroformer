@@ -1,0 +1,16 @@
+[project]
+name = "fast-melroformer"
+version = "0.0.1"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "torch>=2.8",
+  "audio-separator[cpu]==0.47.0",  # reference model + end-to-end separator
+  "coremltools>=8.3",
+  "audioread",
+  "soundfile",
+  "numpy",
+  "pyyaml",
+]
+
+[tool.uv]
+package = false
