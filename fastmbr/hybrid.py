@@ -13,7 +13,7 @@ import torch
 from torch import nn
 
 ROOT = Path(__file__).resolve().parents[1]
-PKG = ROOT / "out" / "ane_stack_1101.mlpackage"
+PKG = ROOT / "out" / "ane_stack_1101_g15.mlpackage"  # 15 band groups (bench/ane_stack.py convert)
 # Two threads driving MPS at once segfaults. Workers hold this lock for all GPU work and AneCall
 # releases it only during the ANE predict, so one chunk's ANE stack overlaps another chunk's GPU steps.
 MPS_LOCK = threading.Lock()
@@ -47,10 +47,10 @@ class AneCall(nn.Module):
         return torch.from_numpy(np.ascontiguousarray(y[0].transpose(1, 2, 0))).to(dev, dt)
 
 
-def build():
+def build(pkg=PKG):
     sys.path.insert(0, str(ROOT / "bench"))
     from common import load_reference
 
     model = load_reference(torch.float16)
-    model.layers = nn.ModuleList([nn.ModuleList([AneCall(), nn.Identity()])])  # forward loop runs once
+    model.layers = nn.ModuleList([nn.ModuleList([AneCall(pkg), nn.Identity()])])  # forward loop runs once
     return model

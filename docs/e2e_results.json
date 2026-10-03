@@ -1,0 +1,37 @@
+{
+ "ref16": {
+  "seconds": 133.7,
+  "x_real_time": 1.35,
+  "fidelity_db": 65.9
+ },
+ "patch": {
+  "seconds": 82.3,
+  "x_real_time": 2.19,
+  "fidelity_db": 66.7
+ },
+ "gpu": {
+  "seconds": 68.8,
+  "x_real_time": 2.62,
+  "fidelity_db": 65.8
+ },
+ "ane_g1": {
+  "seconds": 49.8,
+  "x_real_time": 3.61,
+  "fidelity_db": 56.5
+ },
+ "ane": {
+  "seconds": 43.0,
+  "x_real_time": 4.19,
+  "fidelity_db": 56.5
+ },
+ "ane2": {
+  "seconds": 43.3,
+  "x_real_time": 4.16,
+  "fidelity_db": 56.5
+ },
+ "ref32": {
+  "seconds": 166.0,
+  "x_real_time": 1.08,
+  "fidelity_db": 240.3
+ }
+}

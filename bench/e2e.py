@@ -21,8 +21,15 @@ with gpu_lock():
         np.save(ref_p, ref.astype(np.float32))
         gc.collect(); torch.mps.empty_cache()
     ref = np.load(ref_p)
+    import json
+    res_p = Path(__file__).resolve().parents[1] / "docs" / "e2e_results.json"
+    res = json.loads(res_p.read_text()) if res_p.exists() else {}
     for engine in sys.argv[1:]:
         v, secs = separate(audio, engine)
-        print(f"  -> fidelity vs fp32 reference: {sdr(ref, v):.1f} dB")
+        f = sdr(ref, v)
+        print(f"  -> fidelity vs fp32 reference: {f:.1f} dB")
+        res[engine] = {"seconds": round(secs, 1), "x_real_time": round(audio.shape[1] / 44100 / secs, 2), "fidelity_db": round(f, 1)}
+        res_p.parent.mkdir(exist_ok=True)
+        res_p.write_text(json.dumps(res, indent=1))
         del v
         gc.collect(); torch.mps.empty_cache()

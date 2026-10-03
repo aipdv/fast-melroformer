@@ -147,3 +147,28 @@ MLX bug reported upstream: https://github.com/ssmall256/mlx-audio-separator/issu
 - Two threads driving MPS at once segfault. ane2 serializes MPS with a lock and releases it during Core ML predict.
 - ane2 barely helps because per chunk the split is: predict 2.0-2.1 s, everything else 0.4 s. The ANE is the bottleneck.
   In-pipeline predict (2.0 s) is slower than the isolated stack bench (1.67 s); input contiguity is not the cause.
+
+## Final consistent run (bench/e2e.py, one session, 3 min TV clip) -> docs/e2e_results.json, docs/optimization.png
+
+| stage | engine | time for 180 s | x real time | match vs fp32 |
+|---|---|---|---|---|
+| start (audio-separator CLI, fp32, RAM busy, earlier session) | - | 232 s | 0.78x | - |
+| same model fp32, RAM free | ref32 | 166.0 s | 1.08x | reference |
+| fp16 | ref16 | 133.7 s | 1.35x | 65.9 dB |
+| + RoPE tables, fused gates, fused norm | patch | 82.3 s | 2.19x | 66.7 dB |
+| + custom Metal kernels | gpu | 68.8 s | 2.62x | 65.8 dB |
+| + transformer stack on the Neural Engine | ane_g1 | 49.8 s | 3.61x | 56.5 dB |
+| + time attention tiled (15 band groups x 3 query tiles) | ane | 43.0 s | 4.19x | 56.5 dB |
+| 2 workers (MPS lock released during predict) | ane2 | 43.3 s | 4.16x | 56.5 dB |
+
+Overall: 5.4x faster than the start, 3.1x faster than plain fp16, same weights.
+
+## Dead ends (measured)
+
+- torch.compile on MPS: no gain; fp16 + compile slower (51 s vs 31 s on 30 s clip).
+- MLX port (mlx-audio-separator): fast on 30 s, 1.0x on 3 min.
+- ANE: Apple keys-on-channels einsum (348 vs 319 ms/time block); explicit max/exp/sum softmax (no change);
+  heads as batch dim (time block 5108 ms vs 251, freq 259 vs 143); tanh GELU (+1.5 dB, +25% time); 801-frame chunks (~11% per second).
+- GPU + ANE on different chunks: ANE unaffected, GPU slows ~2x while the ANE runs (shared memory bandwidth; Core ML predict
+  uses only 0.2 s CPU per 2.1 s call). Net gain ~0.
+- Chinese-lab sparse/linear attention (NSA, DSA, MoBA, MLA, Lightning): no win at sequence lengths 1101 / 60, non-causal.

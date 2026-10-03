@@ -15,7 +15,8 @@ from common import OUT, chunks, gpu_lock, load_reference, sdr  # noqa: E402
 from fastmbr.ane import AneStack  # noqa: E402
 
 FRAMES = 1101
-PKG = OUT / f"ane_stack_{FRAMES}.mlpackage"
+from fastmbr.ane import BAND_GROUPS  # noqa: E402
+PKG = OUT / f"ane_stack_{FRAMES}_g{BAND_GROUPS}.mlpackage"
 IO = OUT / "stack_io.npz"
 
 

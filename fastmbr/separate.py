@@ -1,13 +1,15 @@
 """Separate voice from everything else with Kim Mel-RoFormer, fast on Apple silicon.
 
-    .venv/bin/python -m fastmbr.separate input.(wav|mp3|mp4|mkv) [-o outdir] [--engine ane2|ane|gpu|dual|ref16|ref32]
+    .venv/bin/python -m fastmbr.separate input.(wav|mp3|mp4|mkv) [-o outdir] [--engine ane|ane2|gpu|dual|ref16|ref32]
 
 Writes <outdir>/<name>_vocals.wav and <name>_other.wav (44.1 kHz stereo, float32).
 Chunks are 485100 samples (11 s, 1101 frames) with no overlap, like audio-separator's default for this model.
 Engines:
   gpu   fastmbr.metal (custom Metal kernels)
-  ane   transformer stack on the Neural Engine, rest on the GPU (fastmbr.hybrid)
-  ane2  two ane workers (default): one chunk's GPU/CPU steps overlap the other's ANE stack
+  ane   (default) transformer stack on the Neural Engine, rest on the GPU (fastmbr.hybrid)
+  ane2  two ane workers (no gain measured: the ANE is the bottleneck)
+  patch fastmbr.patch only (fp16 RoPE tables, fused gates, F.rms_norm)
+  ane_g1 ane with untiled time attention (for the history chart)
   dual  gpu and ane workers pull chunks from one queue at the same time
   ref16 / ref32  audio-separator's model as is (for comparison)
 """
@@ -38,11 +40,13 @@ def models(engine):
         return [load_reference(torch.float16)]
     from fastmbr import hybrid, metal
     return {"gpu": lambda: [metal.build()], "ane": lambda: [hybrid.build()],
+            "ane_g1": lambda: [hybrid.build(hybrid.ROOT / "out" / "ane_stack_1101_g1.mlpackage")],  # untiled attention (history)
+            "patch": lambda: [__import__("fastmbr.patch", fromlist=["accelerate"]).accelerate(load_reference(torch.float16))],
             "ane2": lambda: [hybrid.build(), hybrid.build()],  # 2 workers: one's GPU/CPU steps overlap the other's ANE stack
             "dual": lambda: [metal.build(), hybrid.build()]}[engine]()
 
 
-def separate(audio, engine="dual", log=print):
+def separate(audio, engine="ane", log=print):
     n = audio.shape[1]
     nchunks = -(-n // CHUNK)
     padded = np.zeros((2, nchunks * CHUNK), np.float32)
@@ -95,7 +99,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("input")
     ap.add_argument("-o", "--outdir", default=".")
-    ap.add_argument("--engine", default="ane2", choices=["gpu", "ane", "ane2", "dual", "ref16", "ref32"])
+    ap.add_argument("--engine", default="ane", choices=["gpu", "ane", "ane2", "ane_g1", "patch", "dual", "ref16", "ref32"])
     a = ap.parse_args()
     audio = load_audio(a.input)
     vocals, _ = separate(audio, a.engine)
