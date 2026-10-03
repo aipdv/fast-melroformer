@@ -22,12 +22,20 @@ def gpu_lock(poll=2.0):
     while True:
         try:
             LOCK.mkdir()
+            (LOCK / "pid").write_text(str(os.getpid()))
             break
         except FileExistsError:
+            try:  # reclaim a lock whose owner died (killed by bench/guard.sh, crash)
+                os.kill(int((LOCK / "pid").read_text()), 0)
+            except (ProcessLookupError, FileNotFoundError, ValueError):
+                (LOCK / "pid").unlink(missing_ok=True)
+                LOCK.rmdir()
+                continue
             time.sleep(poll)
     try:
         yield
     finally:
+        (LOCK / "pid").unlink(missing_ok=True)
         LOCK.rmdir()
 
 
@@ -36,10 +44,11 @@ def load_reference(dtype=torch.float32, device="mps"):
     from audio_separator.separator.uvr_lib_v5.roformer.mel_band_roformer import MelBandRoformer
 
     cfg = yaml.load(CFG.read_text(), Loader=yaml.FullLoader)["model"]
-    m = MelBandRoformer(**cfg)
-    sd = torch.load(CKPT, map_location="cpu")
+    m = MelBandRoformer(**cfg).to(dtype)  # cast first: keeps the CPU peak near one fp16 copy
+    sd = torch.load(CKPT, map_location="cpu", mmap=True)  # mmap: the 913 MB fp32 file is not copied into RAM
     m.load_state_dict(sd.get("state_dict", sd))
-    return m.to(dtype).to(device).eval()
+    del sd
+    return m.to(device).eval()
 
 
 def chunks(n=3, start_s=20.0):

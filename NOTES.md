@@ -54,3 +54,36 @@ Hypothesis H1: precomputed fp16 cos/sin + fused kernels cut attention time ~45% 
 | fast16 | 5.14 | 2.14x | 56.3 dB |
 
 1.6x from glue removal alone. Output identical to the ear (both > 55 dB).
+
+## 2026-10-03 Crash and safety rules
+
+The Mac froze (out of RAM) while an ANE conversion probe and a GPU kernel job ran at the same time.
+Now: `bench/guard.sh` runs one job at a time, kills it below 8% free RAM, caps the MPS pool
+(watermark ratios). The GPU lock reclaims itself when its owner dies. Checkpoint loads are mmap'd and cast to fp16 first.
+
+## H2 result: fastmbr/metal.py (custom Metal kernels via torch.mps.compile_shader)
+
+- `qkv_rope`: one pass from the fused qkv+gates GEMM output to contiguous q, k (RoPE, fp32 math), v in SDPA layout.
+- `gate_merge`: sigmoid gate x attention output + head merge in one pass.
+
+| variant | s/chunk | x real time | fidelity vs fp32 |
+|---|---|---|---|
+| fast16 | 4.84 | 2.27x | 56.3 dB |
+| metal | 4.01 | 2.74x | 54.7 dB |
+
+GPU floor estimate: GEMM fp16 peaks at 1.42 TFLOPS here; the model is ~4.1-4.5 TFLOP per chunk => ~3 s/chunk best case.
+
+## ANE probe
+
+Toy FF stack (4 x 384->1536->384 as 1x1 convs on (1, 384, 60, 1101)), fp16:
+CPU_AND_NE 126 ms = 4.9 TFLOPS; ALL 110 ms = 5.7 TFLOPS; CPU_AND_GPU 474 ms = 1.3 TFLOPS.
+=> the ANE has ~4x the GPU's matmul throughput on this shape.
+
+## Research summary (attention methods, ANE practice) — see the agent report digest
+
+- Chinese-lab sparse/linear attention (NSA, DSA, MoBA, MLA, Lightning, Kimi Linear): little to no gain at seq 1101/60, non-causal.
+  DSA keeps every key at <=2048 tokens; MLA only saves KV cache. Best training-free: SpargeAttn-style dynamic block sparsity (time axis only, <=22% of FLOPs).
+- Time-attention matmuls are ~22% of FLOPs; FF + projections dominate. So the hardware (ANE) matters more than attention tricks.
+- ANE rules: fixed shapes, (B,C,1,S)-style layout with 1x1 convs, per-head einsum (Apple SPLIT_EINSUM), tile queries so one
+  head's scores stay small, keep STFT/complex outside, rank <= 4 for batched matmul, watch fp16 overflow in norms.
+- Smule windowed checkpoint (mbr-win10-sink8): 11.17 vs 12.12 dB, plain dense ops possible.
