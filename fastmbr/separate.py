@@ -1,12 +1,13 @@
 """Separate voice from everything else with Kim Mel-RoFormer, fast on Apple silicon.
 
-    .venv/bin/python -m fastmbr.separate input.(wav|mp3|mp4|mkv) [-o outdir] [--engine gpu|ane|dual|ref16|ref32]
+    .venv/bin/python -m fastmbr.separate input.(wav|mp3|mp4|mkv) [-o outdir] [--engine ane2|ane|gpu|dual|ref16|ref32]
 
 Writes <outdir>/<name>_vocals.wav and <name>_other.wav (44.1 kHz stereo, float32).
 Chunks are 485100 samples (11 s, 1101 frames) with no overlap, like audio-separator's default for this model.
 Engines:
   gpu   fastmbr.metal (custom Metal kernels)
   ane   transformer stack on the Neural Engine, rest on the GPU (fastmbr.hybrid)
+  ane2  two ane workers (default): one chunk's GPU/CPU steps overlap the other's ANE stack
   dual  gpu and ane workers pull chunks from one queue at the same time
   ref16 / ref32  audio-separator's model as is (for comparison)
 """
@@ -37,6 +38,7 @@ def models(engine):
         return [load_reference(torch.float16)]
     from fastmbr import hybrid, metal
     return {"gpu": lambda: [metal.build()], "ane": lambda: [hybrid.build()],
+            "ane2": lambda: [hybrid.build(), hybrid.build()],  # 2 workers: one's GPU/CPU steps overlap the other's ANE stack
             "dual": lambda: [metal.build(), hybrid.build()]}[engine]()
 
 
@@ -49,21 +51,31 @@ def separate(audio, engine="dual", log=print):
     work = queue.Queue()
     for i in range(nchunks):
         work.put(i)
-    done = {}
+    done, errors = {}, []
 
     def worker(m, name):
+        try:
+            run(m, name)
+        except Exception as e:  # surface worker failures instead of returning silent zeros
+            errors.append(e)
+
+    def run(m, name):
         with torch.inference_mode():
             while True:
                 try:
                     i = work.get_nowait()
                 except queue.Empty:
                     return
-                x = torch.from_numpy(padded[None, :, i * CHUNK:(i + 1) * CHUNK]).to("mps")
-                vocals[:, i * CHUNK:(i + 1) * CHUNK] = m(x).float().cpu().numpy()[0]
+                with lock:
+                    x = torch.from_numpy(padded[None, :, i * CHUNK:(i + 1) * CHUNK]).to("mps")
+                    vocals[:, i * CHUNK:(i + 1) * CHUNK] = m(x).float().cpu().numpy()[0]
                 done[i] = name
 
     ms = models(engine)
-    names = ["gpu", "ane"] if engine == "dual" else [engine]
+    import contextlib
+    from fastmbr.hybrid import MPS_LOCK
+    lock = MPS_LOCK if engine == "ane2" else contextlib.nullcontext()
+    names = {"dual": ["gpu", "ane"], "ane2": ["ane-a", "ane-b"]}.get(engine, [engine])
     t0 = time.perf_counter()
     threads = [threading.Thread(target=worker, args=(m, nm)) for m, nm in zip(ms, names)]
     for t in threads:
@@ -71,6 +83,9 @@ def separate(audio, engine="dual", log=print):
     for t in threads:
         t.join()
     secs = time.perf_counter() - t0
+    if errors:
+        raise errors[0]
+    assert len(done) == nchunks, f"only {len(done)}/{nchunks} chunks done"
     split = {nm: sum(1 for v in done.values() if v == nm) for nm in names}
     log(f"{engine}: {n / SR:.0f} s of audio in {secs:.1f} s = {n / SR / secs:.2f}x real time; chunks per engine {split}")
     return vocals[:, :n], secs
@@ -80,7 +95,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("input")
     ap.add_argument("-o", "--outdir", default=".")
-    ap.add_argument("--engine", default="dual", choices=["gpu", "ane", "dual", "ref16", "ref32"])
+    ap.add_argument("--engine", default="ane2", choices=["gpu", "ane", "ane2", "dual", "ref16", "ref32"])
     a = ap.parse_args()
     audio = load_audio(a.input)
     vocals, _ = separate(audio, a.engine)

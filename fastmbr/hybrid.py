@@ -5,7 +5,7 @@
 
 The Core ML package comes from `bench/ane_stack.py convert` (out/ane_stack_1101.mlpackage).
 """
-import sys
+import sys, threading
 from pathlib import Path
 
 import numpy as np
@@ -14,6 +14,9 @@ from torch import nn
 
 ROOT = Path(__file__).resolve().parents[1]
 PKG = ROOT / "out" / "ane_stack_1101.mlpackage"
+# Two threads driving MPS at once segfaults. Workers hold this lock for all GPU work and AneCall
+# releases it only during the ANE predict, so one chunk's ANE stack overlaps another chunk's GPU steps.
+MPS_LOCK = threading.Lock()
 
 
 class AneCall(nn.Module):
@@ -33,7 +36,14 @@ class AneCall(nn.Module):
     def forward(self, x):  # (f, t, d) -> (1, d, f, t) -> ANE -> back
         dev, dt = x.device, x.dtype
         a = x.permute(2, 0, 1)[None].to(torch.float16).cpu().numpy()
-        y = self.ml.predict({"x": a})["y"]
+        locked = MPS_LOCK.locked()
+        if locked:
+            MPS_LOCK.release()
+        try:
+            y = self.ml.predict({"x": a})["y"]
+        finally:
+            if locked:
+                MPS_LOCK.acquire()
         return torch.from_numpy(np.ascontiguousarray(y[0].transpose(1, 2, 0))).to(dev, dt)
 
 

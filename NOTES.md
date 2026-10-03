@@ -130,3 +130,20 @@ GPU chunk 5.2 -> 11.2 s, wall 11.2 s vs 12.0 s serial. Little overlap. Likely sh
 ANE softmax streams ~1 GB of scores per block through DRAM). Python's GIL is released during Core ML predict.
 
 MLX bug reported upstream: https://github.com/ssmall256/mlx-audio-separator/issues/6
+
+## End to end, 3 min TV clip (bench/e2e.py, fidelity vs fp32 reference with the same chunking)
+
+| engine | time for 180 s | x real time | fidelity |
+|---|---|---|---|
+| ref32 (audio-separator model, fp32, MPS) | 166.6 s | 1.08x | reference |
+| gpu (Metal kernels) | 75.1 s | 2.40x | (run pending) |
+| ane (ANE stack + GPU rest) | 46.9 s | 3.84x | 56.5 dB |
+| ane2 (2 workers, MPS lock released during ANE predict) | 45.2 s | 3.98x | 56.5 dB |
+| dual (gpu + ane workers) | 68.0 s | 2.65x | (void run) |
+
+- The full 3 min fidelity (56.5 dB) is higher than the 3-chunk bench_chunk number (40.2 dB): the bench chunks are a quiet passage,
+  where the same small absolute error is a larger share of the signal. Both are above the ~40 dB "inaudible" line.
+- dual is slower than ane alone: the busy GPU slows the ane path's own GPU steps (contention).
+- Two threads driving MPS at once segfault. ane2 serializes MPS with a lock and releases it during Core ML predict.
+- ane2 barely helps because per chunk the split is: predict 2.0-2.1 s, everything else 0.4 s. The ANE is the bottleneck.
+  In-pipeline predict (2.0 s) is slower than the isolated stack bench (1.67 s); input contiguity is not the cause.
