@@ -87,3 +87,29 @@ CPU_AND_NE 126 ms = 4.9 TFLOPS; ALL 110 ms = 5.7 TFLOPS; CPU_AND_GPU 474 ms = 1.
 - ANE rules: fixed shapes, (B,C,1,S)-style layout with 1x1 convs, per-head einsum (Apple SPLIT_EINSUM), tile queries so one
   head's scores stay small, keep STFT/complex outside, rank <= 4 for batched matmul, watch fp16 overflow in norms.
 - Smule windowed checkpoint (mbr-win10-sink8): 11.17 vs 12.12 dB, plain dense ops possible.
+
+## H3: transformer stack on the Neural Engine (fastmbr/ane.py, bench/ane_stack.py, fastmbr/hybrid.py)
+
+ANE-layout rewrite matches the reference in torch fp32: 116.5 dB. Norm inputs RMS 0.25..3.6 => prescale 8 before squaring.
+Core ML (fp16, macOS15, CPU_AND_NE): all 4764 ops placed on the ANE. Package 47 MB.
+
+| piece (1101 frames) | ANE ms |
+|---|---|
+| full stack (12 blocks) | 2470 |
+| time block | 319 (q_tiles 3), 315 (6); Apple keys-on-channel einsum 348 |
+| time block without attention core | 98 |
+| time block without softmax | 182 => softmax ~137 ms/block (581M elements, ~4.2 G elem/s) |
+| time block, explicit max/exp/sum softmax | 316 (no gain) |
+| freq block | 130; without attention core 105 |
+| 801 frames: time 193, freq 98 | only ~11% better per second of audio |
+
+=> On the ANE the time-attention softmax is the wall (6 x 137 ms). Everything else is fast.
+
+End to end (bench_chunk, one chunk, ANE stack + GPU front/back, serial):
+
+| variant | s/chunk | x real time | fidelity |
+|---|---|---|---|
+| metal (GPU only) | 4.03 | 2.73x | 54.7 dB |
+| hybrid (ANE stack) | 3.00 | 3.67x | 40.2 dB |
+
+Next: (1) find where ANE fp16 loses precision (target >= 45 dB), (2) run GPU and ANE at the same time on different chunks.
