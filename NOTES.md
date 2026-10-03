@@ -113,3 +113,20 @@ End to end (bench_chunk, one chunk, ANE stack + GPU front/back, serial):
 | hybrid (ANE stack) | 3.00 | 3.67x | 40.2 dB |
 
 Next: (1) find where ANE fp16 loses precision (target >= 45 dB), (2) run GPU and ANE at the same time on different chunks.
+
+## H4: ANE precision and tiling
+
+Per-block fidelity of the ANE stack vs torch fp32 (bench/ane_blocks.py): 53.7 dB after block 0, ~1.5 dB lost per block, then
+45.7 -> 35.9 dB at the last block. Activations are small (max |x| < 56), so no overflow.
+Stage probe of block 11 (bench/ane_block_stages.py): the ANE's native GELU drops 58.7 -> 42.8 dB.
+tanh-form GELU: 48.8 dB at that stage, but end to end only 40.2 -> 41.7 dB and the stack gets 25% slower. Kept native (option ANE_GELU=tanh).
+
+Time attention tiled over 15 band groups x 3 query tiles (each op ~3 MB of scores, near the ANE's on-chip size):
+time block 319 -> 258 ms; full stack 2.47 -> 1.67 s per 11 s chunk; 30,492 ops, all on the ANE.
+First load compiles for ~4.5 min; the compiled .mlmodelc is cached (out/), later loads take 2.2 s.
+
+Concurrency, first try (whole stack on ANE without band groups, GPU running a full chunk at the same time):
+GPU chunk 5.2 -> 11.2 s, wall 11.2 s vs 12.0 s serial. Little overlap. Likely shared memory bandwidth (the ungrouped
+ANE softmax streams ~1 GB of scores per block through DRAM). Python's GIL is released during Core ML predict.
+
+MLX bug reported upstream: https://github.com/ssmall256/mlx-audio-separator/issues/6

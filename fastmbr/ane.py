@@ -22,6 +22,9 @@ from torch import nn
 from fastmbr.patch import _split_half_perm
 
 ATTN_LAYOUT = os.environ.get("ANE_ATTN_LAYOUT", "batched")  # "apple" = keys-on-channels einsum
+ALL_OUTPUTS = os.environ.get("ANE_ALL_OUTPUTS") == "1"  # profiling: return every block output
+GELU = os.environ.get("ANE_GELU", "native")  # "tanh": +1.5 dB end to end but +25% ANE time (NOTES.md)
+BAND_GROUPS = int(os.environ.get("ANE_BAND_GROUPS", "15"))  # time block 319 -> 258 ms (1 vs 15 groups); 60 groups 245 ms but a huge graph
 NORM_PRESCALE = 8.0  # measured norm-input RMS 0.25..3.6 (bench/ane_stack.py check): (x/8)^2 stays in fp16 normal range, sums < 65504
 
 
@@ -93,9 +96,12 @@ class Attn(nn.Module):
                     return e * (1.0 / e.sum(-1, keepdim=True))
                 o = torch.cat([torch.einsum("bsqk,bcsk->bcsq", sm(torch.einsum("bcsq,bcsk->bsqk", qt, k)), v)
                                for qt in q.chunk(self.q_tiles, dim=3)], dim=3)
-            elif self.axis == "time":  # (1, d, F, T): attend over T per band
-                o = torch.cat([torch.einsum("bsqk,bcsk->bcsq", torch.einsum("bcsq,bcsk->bsqk", qt, k).softmax(-1), v)
-                               for qt in q.chunk(self.q_tiles, dim=3)], dim=3)
+            elif self.axis == "time":  # (1, d, F, T): attend over T per band; tile bands x queries so ops stay small
+                rows = []
+                for qb, kb, vb in zip(q.chunk(BAND_GROUPS, 2), k.chunk(BAND_GROUPS, 2), v.chunk(BAND_GROUPS, 2)):
+                    rows.append(torch.cat([torch.einsum("bsqk,bcsk->bcsq", torch.einsum("bcsq,bcsk->bsqk", qt, kb).softmax(-1), vb)
+                                           for qt in qb.chunk(self.q_tiles, dim=3)], dim=3))
+                o = torch.cat(rows, dim=2)
             else:  # attend over F per frame
                 o = torch.einsum("btqk,bckt->bcqt", torch.einsum("bcqt,bckt->btqk", q, k).softmax(-1), v)
             outs.append(o * torch.sigmoid(y[:, 3 * i + h:3 * i + h + 1]))
@@ -109,7 +115,20 @@ class FF(nn.Module):
         self.norm, self.a, self.b = Norm(net[0].gamma), conv(net[1].weight, net[1].bias), conv(net[4].weight, net[4].bias)
 
     def forward(self, x):
-        return self.b(F.gelu(self.a(self.norm(x))))
+        return self.b(gelu(self.a(self.norm(x))))
+
+
+def gelu(x):
+    if GELU == "tanh":  # tanh form built from basic ops; the ANE's native gelu loses ~15 dB (bench/ane_block_stages.py)
+        return 0.5 * x * (1.0 + torch.tanh(0.7978845608 * (x + 0.044715 * x * x * x)))
+    if GELU == "split":
+        # gelu(x) = relu(x) - |x| * Phi(-|x|). relu is exact on the ANE; the low-precision transcendental
+        # only touches the small correction term (<= 0.17). Phi(z) ~ sigmoid(1.5976 z + 0.07056 z^3), max err 1.4e-4.
+        a = torch.abs(x)
+        return torch.relu(x) - a * torch.sigmoid(-(1.5976 * a + 0.07056 * a * a * a))
+    if GELU == "sigmoid":
+        return x * torch.sigmoid(1.702 * x)
+    return F.gelu(x)
 
 
 class Block(nn.Module):
@@ -138,6 +157,8 @@ class AneStack(nn.Module):
                 self.blocks.append(Block(ft, "freq", bands, 1))
 
     def forward(self, x):
+        outs = []
         for b in self.blocks:
             x = b(x)
-        return x
+            outs.append(x)
+        return tuple(outs) if ALL_OUTPUTS else x

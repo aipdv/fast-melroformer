@@ -21,8 +21,14 @@ class AneCall(nn.Module):
 
     def __init__(self, pkg=PKG):
         super().__init__()
+        import shutil
         import coremltools as ct
-        self.ml = ct.models.MLModel(str(pkg), compute_units=ct.ComputeUnit.CPU_AND_NE)
+        compiled = pkg.with_suffix(".mlmodelc")  # keep the compiled model: compiling the big graph takes minutes
+        if not compiled.exists():
+            m = ct.models.MLModel(str(pkg), compute_units=ct.ComputeUnit.CPU_AND_NE)
+            shutil.copytree(m.get_compiled_model_path(), compiled)
+            del m
+        self.ml = ct.models.CompiledMLModel(str(compiled), compute_units=ct.ComputeUnit.CPU_AND_NE)
 
     def forward(self, x):  # (f, t, d) -> (1, d, f, t) -> ANE -> back
         dev, dt = x.device, x.dtype
