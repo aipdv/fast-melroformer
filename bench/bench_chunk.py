@@ -21,6 +21,10 @@ def build(name):
     if name == "fast16":
         from fastmbr.patch import accelerate
         return accelerate(load_reference(torch.float16))
+    if ":" in name:  # "fastmbr.metal:build" -> any module exposing build() -> model on mps
+        import importlib
+        mod, fn = name.split(":")
+        return getattr(importlib.import_module(mod), fn)()
     raise SystemExit(f"unknown variant {name}")
 
 
