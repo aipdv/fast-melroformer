@@ -172,3 +172,9 @@ Overall: 5.4x faster than the start, 3.1x faster than plain fp16, same weights.
 - GPU + ANE on different chunks: ANE unaffected, GPU slows ~2x while the ANE runs (shared memory bandwidth; Core ML predict
   uses only 0.2 s CPU per 2.1 s call). Net gain ~0.
 - Chinese-lab sparse/linear attention (NSA, DSA, MoBA, MLA, Lightning): no win at sequence lengths 1101 / 60, non-causal.
+
+## Shared upstream (2026-10-26)
+
+- Kim model repo: https://github.com/KimberleyJensen/Mel-Band-Roformer-Vocal-Model/issues/23
+- python-audio-separator (RoPE/RMSNorm fp32 cost on MPS): https://github.com/nomadkaraoke/python-audio-separator/issues/314
+- mlx-audio-separator fast-norm bug: https://github.com/ssmall256/mlx-audio-separator/issues/6
