@@ -1,8 +1,8 @@
 # fast-melroformer
 
-Kim's Mel-Band RoFormer vocal model, made to run about 4x faster than real time on an 8 GB M3 MacBook Air.
+Fast voice separation on Apple Silicon. This runs a Mel-Band RoFormer source separation model on the Neural Engine and the GPU, at about 4x real time on an 8 GB M3 MacBook Air.
 
-The weights are the original ones. Over a 3 minute clip the output matches the fp32 run at 56.5 dB SDR, which you can't hear. A 45 minute TV episode takes about 11 minutes instead of 42.
+It uses an unmodified public checkpoint (`vocals_mel_band_roformer.ckpt`, 228M parameters). Over a 3 minute clip the output matches the fp32 run at 56.5 dB SDR, which you can't hear. A 45 minute TV episode takes about 11 minutes instead of 42.
 
 ![optimization history](docs/optimization.png)
 
@@ -57,6 +57,8 @@ You get `episode_vocals.wav` and `episode_other.wav`. The first run compiles the
 - `fastmbr/separate.py`: the command line tool.
 - `bench/`: the scripts behind every number.
 
-## Credits
+## References
 
-The model is by Kimberley Jensen ([weights](https://huggingface.co/KimberleyJSN/melbandroformer), MIT). The reference implementation comes from [python-audio-separator](https://github.com/nomadkaraoke/python-audio-separator), and the architecture is from the Mel-Band RoFormer paper by Wang, Lu and Won.
+- Checkpoint: [KimberleyJSN/melbandroformer](https://huggingface.co/KimberleyJSN/melbandroformer) (MIT)
+- Reference implementation: [python-audio-separator](https://github.com/nomadkaraoke/python-audio-separator) (MIT)
+- Architecture: [Mel-Band RoFormer for Music Source Separation](https://arxiv.org/abs/2310.01809), Wang, Lu and Won
